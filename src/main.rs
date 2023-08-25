@@ -1,7 +1,8 @@
 // use std::env;
 use std::fs::File;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 
+// TODO: allow multiple replacements (i.e. i => 1,!)
 const LETTER_REPLACEMENTS: [(char, char); 7] = [
     ('e', '3'),
     ('o', '0'),
@@ -31,10 +32,12 @@ fn main() -> io::Result<()> {
     terms.push("borough".to_string());
     // terms.push("matsuborough".to_string());
 
-    let mut dictionary: Vec<String> = Vec::new();
+    // let mut dictionary: Vec<String> = Vec::new();
     // dictionary.push("world".to_string());
     // dictionary.push("rust".to_string());
     // dictionary.push("programming".to_string());
+
+    // let dict = File::open(dictionary)?;
 
     // if let Ok(dictionary) = read_dictionary("dictionary.txt") {
     if dictionary.len() >= 0 {
@@ -42,6 +45,7 @@ fn main() -> io::Result<()> {
         println!("Estimated word count: {}", estimated_count);
 
         let fout = File::create("wordlist.txt")?;
+        let mut writer = BufWriter::new(fout);
 
         for word1 in &dictionary {
             // word too long
@@ -51,16 +55,7 @@ fn main() -> io::Result<()> {
 
             // word is long enough
             if word1.len() >= min_length {
-                generate_permutations(&fout, word1.clone())?;
-            }
-
-            // word + word
-            for word2 in &dictionary {
-                let word = format!("{}{}", word1, word2);
-
-                if word.len() >= min_length && word.len() <= max_length {
-                    generate_permutations(&fout, word.clone())?;
-                }
+                generate_permutations(&mut writer, word1.clone())?;
             }
 
             // word + term
@@ -70,10 +65,12 @@ fn main() -> io::Result<()> {
                 let word_term = format!("{}{}", word1, term);
 
                 if term_word.len() >= min_length && term_word.len() <= max_length {
-                    generate_permutations(&fout, term_word.clone())?;
-                    generate_permutations(&fout, word_term.clone())?;
+                    generate_permutations(&mut writer, term_word.clone())?;
+                    generate_permutations(&mut writer, word_term.clone())?;
                 }
             }
+
+            writer.flush()?;
         }
 
         // Add terms even if dictionary is empty
@@ -84,16 +81,18 @@ fn main() -> io::Result<()> {
 
             // term
             if term1.len() >= min_length {
-                generate_permutations(&fout, term1.clone())?;
+                generate_permutations(&mut writer, term1.clone())?;
             }
 
             // term + term
             for term2 in &terms {
                 let term_term = format!("{}{}", term1, term2);
                 if term_term.len() >= min_length && term_term.len() <= max_length {
-                    generate_permutations(&fout, term_term.clone())?;
+                    generate_permutations(&mut writer, term_term.clone())?;
                 }
             }
+
+            writer.flush()?;
         }
     } else {
         println!("Error reading dictionary file.");
@@ -102,8 +101,21 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+// pub fn generate_wordlist(
+//     out_fname: &str,
+//     dict_file: BufReader,
+//     terms: &[&str],
+//     transforms: &[(char, char)],
+//     max_length: u8,
+//     min_length: u8,
+// ) -> io::Result<u64> {
+//     let mut count: u64 = 0;
+
+//     Ok(count)
+// }
+
 // adds capitalization and transforms
-fn generate_permutations(fout: &File, w: String) -> io::Result<()> {
+fn generate_permutations(writer: &mut BufWriter<File>, w: String) -> io::Result<()> {
     let word = w.to_lowercase();
     for i in 0..(1 << word.len()) {
         let mut combination = String::new();
@@ -115,14 +127,14 @@ fn generate_permutations(fout: &File, w: String) -> io::Result<()> {
             }
         }
         // for each caps, transform
-        add_transformations(fout, combination.as_str())?;
+        add_transformations(writer, combination.as_str())?;
     }
 
     Ok(())
 }
 
 // "leet" transforms
-fn add_transformations(mut fout: &File, word: &str) -> io::Result<()> {
+fn add_transformations(writer: &mut BufWriter<File>, word: &str) -> io::Result<()> {
     let mut current = vec![String::new()];
     for c in word.chars() {
         let mut new_combinations = Vec::new();
@@ -138,7 +150,9 @@ fn add_transformations(mut fout: &File, word: &str) -> io::Result<()> {
     }
 
     for combo in current {
-        writeln!(fout, "{}", combo)?;
+        writer.write_all(combo.as_bytes())?;
+        writer.write_all(b"\n")?;
+        // writeln!(fout, "{}", combo)?;
     }
 
     Ok(())
