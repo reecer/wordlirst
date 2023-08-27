@@ -1,8 +1,7 @@
-// use std::env;
 use clap::Parser;
 use std::error::Error;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead, BufReader, BufWriter, Seek, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -17,7 +16,7 @@ impl ReplacePair {
     }
 }
 
-/// Simple program to greet a person
+/// Simple program to generate a wordlist
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -34,7 +33,7 @@ struct Args {
     terms: Vec<String>,
 
     /// Characters to replace (i.e. e=3 to replace e's with 3's)
-    #[arg(short, long, value_parser=parse_key_val, default_value="o=0,e=3,i=!,a=@,s=$,t=7", value_delimiter=',')]
+    #[arg(short, long, value_parser=parse_key_val, default_value="o=0,e=3,l=1,i=!,a=@,s=$,t=7", value_delimiter=',')]
     replacements: Vec<ReplacePair>,
 
     /// Min/max password length
@@ -44,27 +43,49 @@ struct Args {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    println!("{:#?}", args);
+    // println!("{:#?}", args);
 
-    let terms = args.terms;
-    let transforms = &args.replacements;
+    // parse args
     let min_length = args.length[0] as usize;
     let max_length = args.length[1] as usize;
+    let transforms = &args.replacements;
+    let terms: Vec<String> = args
+        .terms
+        .into_iter()
+        .filter(|word| word.len() <= max_length)
+        .collect();
     let dictionary: Vec<String> = if let Some(dict_fname) = args.dictionary {
-        read_dictionary(dict_fname)?
+        read_dictionary(dict_fname, max_length)?
     } else {
         Vec::new()
     };
 
+    // Print info
+    println!("Dictionary length: {}", dictionary.len());
+    println!("Terms length: {}", terms.len());
+    println!("Replacements: {}", transforms.len());
+    println!("Word min/max: {} - {}", min_length, max_length);
+
+    // inaccurate word count estimation
     let estimated_count = estimate_word_count(&dictionary, &terms, min_length, max_length);
     println!("Estimated word count: {}", estimated_count);
 
-    let fout = File::create(&args.output)?;
+    // open for read/write/create
+    let mut fout: File = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(args.output)?;
 
+    // generate 'em
+    println!("Generating...");
     generate_wordlist(&fout, dictionary, terms, transforms, min_length, max_length)?;
 
-    // let line_count = BufReader::new(&fout).lines().count();
-    // println!("{} words generated!", line_count);
+    // count resulting lines
+    fout.seek(std::io::SeekFrom::Start(0))?;
+    let line_count = BufReader::new(&fout).lines().count();
+    println!("{} words generated!", line_count);
 
     Ok(())
 }
@@ -80,51 +101,89 @@ fn generate_wordlist(
     let mut writer = BufWriter::new(fout);
 
     for word1 in &dictionary {
-        // word too long
-        if word1.len() > max_length {
-            continue;
-        }
-
-        // word is long enough
+        // word
         if word1.len() >= min_length {
-            generate_permutations(&mut writer, word1.clone(), transforms)?;
+            generate_permutations(&mut writer, word1, transforms)?;
         }
-
+        // word + word
+        generate_concats(
+            &mut writer,
+            word1,
+            &dictionary,
+            transforms,
+            min_length,
+            max_length,
+        )?;
         // word + term
-        // term + word
-        for term in &terms {
-            let term_word = format!("{}{}", term, word1);
-            let word_term = format!("{}{}", word1, term);
-
-            if term_word.len() >= min_length && term_word.len() <= max_length {
-                generate_permutations(&mut writer, term_word.clone(), transforms)?;
-                generate_permutations(&mut writer, word_term.clone(), transforms)?;
-            }
-        }
-
-        writer.flush()?;
+        generate_concats(
+            &mut writer,
+            word1,
+            &terms,
+            transforms,
+            min_length,
+            max_length,
+        )?;
     }
 
-    // Add terms even if dictionary is empty
     for term1 in &terms {
+        // term
+        if term1.len() >= min_length {
+            generate_permutations(&mut writer, term1, transforms)?;
+        }
+        // term + term
+        generate_concats(
+            &mut writer,
+            term1,
+            &terms,
+            transforms,
+            min_length,
+            max_length,
+        )?;
+        // term + word
+        generate_concats(
+            &mut writer,
+            term1,
+            &dictionary,
+            transforms,
+            min_length,
+            max_length,
+        )?;
+    }
+
+    writer.flush()?;
+    Ok(())
+}
+
+fn generate_concats(
+    writer: &mut BufWriter<&File>,
+    term: &String,
+    terms: &Vec<String>,
+    transforms: &Vec<ReplacePair>,
+    min_length: usize,
+    max_length: usize,
+) -> io::Result<()> {
+    if terms.len() <= 0 {
+        return Ok(());
+    }
+
+    for term1 in terms {
         if term1.len() > max_length {
             continue;
         }
 
-        // term
-        if term1.len() >= min_length {
-            generate_permutations(&mut writer, term1.clone(), transforms)?;
-        }
-
         // term + term
-        for term2 in &terms {
-            let term_term = format!("{}{}", term1, term2);
-            if term_term.len() >= min_length && term_term.len() <= max_length {
-                generate_permutations(&mut writer, term_term.clone(), transforms)?;
-            }
+        let term_term = format!("{}{}", term, term1);
+        if term_term.len() > max_length {
+            continue;
         }
 
-        writer.flush()?;
+        if term_term.len() >= min_length {
+            generate_permutations(writer, &term_term, transforms)?;
+        }
+        // recurse
+        generate_concats(
+            writer, &term_term, terms, transforms, min_length, max_length,
+        )?;
     }
 
     writer.flush()?;
@@ -134,9 +193,11 @@ fn generate_wordlist(
 // adds capitalization and transforms
 fn generate_permutations(
     writer: &mut BufWriter<&File>,
-    w: String,
+    w: &String,
     replacements: &Vec<ReplacePair>,
 ) -> io::Result<()> {
+    println!("{}", w);
+
     let word = w.to_lowercase();
     for i in 0..(1 << word.len()) {
         let mut combination = String::new();
@@ -182,13 +243,14 @@ fn add_transformations(
     Ok(())
 }
 
-fn read_dictionary(filename: PathBuf) -> io::Result<Vec<String>> {
+fn read_dictionary(filename: PathBuf, max_length: usize) -> io::Result<Vec<String>> {
     let file = File::open(filename)?;
     let lines = io::BufReader::new(file).lines();
 
     let dictionary: Vec<String> = lines
         .filter_map(|line| line.ok())
         .map(|word| word.trim().to_string())
+        .filter(|word| word.len() > 0 && word.len() <= max_length)
         .collect();
 
     Ok(dictionary)
