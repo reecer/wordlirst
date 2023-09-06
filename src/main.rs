@@ -168,8 +168,6 @@ fn walk_regex(ast: &Hir, gen: &Generator) -> Vec<String> {
                 // let char_count: usize = s.iter().map(|x| x.len()).sum();
                 // println!("Added {} chars", char_count);
                 for ch in all_chars {
-                    // let mut word = candidate.clone();
-                    // word.push(ch);
                     result.push(ch.to_string());
                 }
             } else {
@@ -191,7 +189,10 @@ fn walk_regex(ast: &Hir, gen: &Generator) -> Vec<String> {
             // println!("Permutating {} words {} times", words.len(), (max - c.min));
             for i in c.min..=max {
                 for word in (1..=i).map(|_| &words).multi_cartesian_product() {
-                    result.push(word.into_iter().join(""));
+                    let text = word.into_iter().join("");
+                    if text.len() >= gen.min_length && text.len() <= gen.max_length {
+                        result.push(text);
+                    }
                 }
             }
         }
@@ -215,7 +216,8 @@ fn walk_regex(ast: &Hir, gen: &Generator) -> Vec<String> {
                 groups.len(),
                 count
             );
-            let all_perms: std::collections::HashSet<String> = groups
+            // let all_perms: std::collections::HashSet<String> = groups
+            let all_perms = groups
                 .iter()
                 .map(|sublist| sublist.iter())
                 .multi_cartesian_product()
@@ -223,19 +225,14 @@ fn walk_regex(ast: &Hir, gen: &Generator) -> Vec<String> {
                     let total_length = combination.iter().map(|s| s.len()).sum::<usize>();
                     total_length >= gen.min_length && total_length <= gen.max_length
                 })
-                .map(|combo| combo.into_iter().join(""))
-                .collect();
+                .map(|combo| combo.into_iter().join(""));
+            // .collect();
 
             // println!("{} total permutations", all_perms.into_iter().count());
-            println!("Done concating {}", all_perms.len());
+            // println!("Done concating {}", all_perms.len());
 
             // let unique_words: std::collections::HashSet<String> = all_perms.into_iter().collect();
-            // for word in unique_words {
-            for word in all_perms {
-                // if !result.contains(&word) {
-                result.push(word);
-                // }
-            }
+            result.extend(all_perms);
 
             println!("Done again");
         }
