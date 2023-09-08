@@ -186,8 +186,16 @@ fn walk_regex(ast: &Hir, gen: &Generator) -> Vec<String> {
             }
 
             let words = walk_regex(&c.sub, gen);
-            // println!("Permutating {} words {} times", words.len(), (max - c.min));
-            for i in c.min..=max {
+
+            // determine max iterations that wouldn't exceed max_length
+            let shortest = if let Some(shortest_word) = words.iter().min_by_key(|s| s.len()) {
+                shortest_word.len()
+            } else {
+                0
+            } as u32;
+            let last = (max + shortest - 1) / shortest;
+            for i in c.min..=last {
+                println!("Repeat {}", i);
                 for word in (1..=i).map(|_| &words).multi_cartesian_product() {
                     let text = word.into_iter().join("");
                     if text.len() >= gen.min_length && text.len() <= gen.max_length {
